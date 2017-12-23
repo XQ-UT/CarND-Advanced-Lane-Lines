@@ -23,7 +23,7 @@ objp = np.zeros((corner_x * corner_y, 3), np.float32)
 objp[:,:2] = np.mgrid[0:corner_x, 0:corner_y].T.reshape(-1, 2)
 ```
 
-For each chessboard image, if we can find **9 x 6** corners, we will append found corners in images space to ```imgpoints``` list and ```objp``` to objpoints list. Then we will use the following function to get camera matrix ```mtx``` and distortion cofficent ```dist```.
+For each chessboard image, if we can find **9 x 6** corners, we will append found corners in images space to ```imgpoints``` list and ```objp``` to ```objpoints``` list. Then we will use the following function to get camera matrix ```mtx``` and distortion coefficient ```dist```.
 ```python
 ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray_shape[::-1], None, None)
 
@@ -47,7 +47,7 @@ In summary, the pipeline has following stages:
 
 
 ### Distortion Correction
-The first step is to undistort image using camera matrix ```mtx``` and distortion cofficient ```dist```. Those two parameters are obtained from camera calibration and will be used in ```cv2.undistort``` function.
+The first step is to undistort image using camera matrix ```mtx``` and distortion coefficient ```dist```. Those two parameters are obtained from camera calibration and will be used in ```cv2.undistort``` function.
 
 We can test the undistort function on one chessboard image:
 
@@ -153,7 +153,7 @@ After applying saturation/x-Sobel threshold, we can transform the curved lines i
   <em>Figure 4: Binary Wrapped Image and Perspective Transformation</em>
 </p>
 
-Next step is to identify left line and right line pixels. I sum up all the pixels in bottom part of the binary transformed image to ```histogram```. Then we can find the bases for left line and right line using:
+Next step is to identify left line and right line pixels. I aggregate all the pixels in bottom part of the binary transformed image along x-axis to ```histogram```. Then we can find the bases for left line and right line using:
 
 ```python
 midpoint = np.int(histogram.shape[0]/2)
@@ -179,7 +179,7 @@ The fitting result is shown in Figure 5. All the pixels identified as left line 
 
 ### Calculate Radius of Curvature
 
-Before calculating radius of curvature, we first need to convert pixel length to real world meter. We define two different conversion cofficients here:
+Before calculating radius of curvature, we first need to convert pixel length to real world meter. We define two different conversion coefficients here:
 
 ```python
 # Define conversions in x and y from pixels space to meters
@@ -232,7 +232,64 @@ The generated [Video](https://github.com/XQ-UT/CarND-Advanced-Lane-Lines/tree/ma
 
 ### Discussion and Improvement
 
+During the image processing, we found some outliers that the pipeline cannot perfectly detect lines. I list two examples below:
+
+<p align="center">
+  <img src="output_images/outlier1.png" width="300" height="800"/>
+  <img src="output_images/outlier2.png" width="300" height="800"/>
+  <br>
+  <em>Figure 7: Outliers Images</em>
+</p>
+
 #### Lines Tracking
+
+Let us take look at the first outlier. The outer white line was detected as left line. This is because in the transformed bianry image, the outer white line has most pixels while accumulating to x axis. So it became the left base x while performing the sliding window algorithm.
+
+To avoid this kind of error, I used line tracking algorithm. When we already detect lines in previous frame, we can reuse the ```left_fit``` and ```right_fit``` as a starting point, collecting all the nearby pixels and treating them as lines pixels. Then we do another second order polynomial fitting on these pixels:
+
+```python
+def track_left_right_lines(binary_warped, left_fit, right_fit):
+    # Assume you now have a new warped binary image 
+    # from the next frame of video (also called "binary_warped")
+    # It's now much easier to find line pixels!
+    nonzero = binary_warped.nonzero()
+    nonzeroy = np.array(nonzero[0])
+    nonzerox = np.array(nonzero[1])
+    margin = 100
+    left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + 
+    left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + 
+    left_fit[1]*nonzeroy + left_fit[2] + margin))) 
+
+    right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + 
+    right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + 
+    right_fit[1]*nonzeroy + right_fit[2] + margin)))  
+
+    # Again, extract left and right line pixel positions
+    leftx = nonzerox[left_lane_inds]
+    lefty = nonzeroy[left_lane_inds] 
+    rightx = nonzerox[right_lane_inds]
+    righty = nonzeroy[right_lane_inds]
+    # Fit a second order polynomial to each
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+    
+    # Draw fit lines on binary wrapped.
+    result_img = draw_fit_lines(binary_warped, left_fit, right_fit, 
+                                left_lane_inds, right_lane_inds, nonzerox, nonzeroy)
+    
+    return (left_fit, right_fit, result_img)
+```
+
+After using the lines tracking technique, we can largely reduce the line jitter phenomenon.
 
 #### X-Sobel Again
 
+Looking at the second outlier image, we can see that there are shadows between the two lines and they are not filtered out in the transformed binary image. In this case, the right line is slightly shifted to left due to those shawdow pixels, resulting in imperfect line detection on the right line. We can notice that in the visualized image. To overcome this, we apply x-Sobel again after ```or```  operation on saturation and x-Sobel threshold. In Figure 8, the combined image has largely eliminate the shadow pixels.
+
+
+
+<p align="center">
+  <img src="output_images/sobel_again.jpg" width="1000" height="300"/>
+  <br>
+  <em>Figure 8: X-Sobel Again </em>
+</p>
