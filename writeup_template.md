@@ -28,15 +28,119 @@ For each chessboard image, if we can find **9 x 6** corners, we will append foun
 ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray_shape[::-1], None, None)
 
 ```
+
+## Pipeline
+
+The following sections will describe how each image from video will be processed to detect lines.
+### Distortion Correction
+The first step is to undistort image using camera matrix ```mtx``` and distortion cofficient ```dist```. Those two parameters are obtained from camera calibration and will be used in ```cv2.undistort``` function.
+
 We can test the undistort function on one chessboard image:
-To undistort image, we use ```mtx``` and ```dist``` in ```cv2.undistort```.
+
 <p align="center">
   <img src="output_images/distortion_correction.jpg" width="1000" height="300"/>
   <br>
   <em>Figure 1: Undistort Chessboard Image</em>
 </p>
 
-### Pipeline (single images)
+### Color/Gradient Threshold
+
+After distortion correction, the image will be transformed to a thresholded binary image where lines pixels should be retained. To achieve this, I did two techniques, saturation threshold and x-Sobel threshold.
+
+#### Saturation Threshold
+
+The image will be converted to HLS space and the saturation channel will be used to threshold.
+
+```python
+def hls_select(img, thresh=(150, 255)):
+    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    s_channel = hls[:,:,2]
+    
+    binary_output = np.zeros_like(s_channel)
+    binary_output[(s_channel>thresh[0]) & (s_channel<=thresh[1])] = 1
+    return binary_output
+```
+#### X-Sobel Threshold
+
+Besides, I also choose X-Sobel to reatin all the pixels that have high x-axis graident.
+
+```python
+def abs_sobel_thresh(img, gray_scaled = False, orient = 'x', sobel_kernel=5,  thresh = (30, 255)):
+    if gray_scaled:
+        gray = img
+    else:
+        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        
+    if orient == 'x':
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize = sobel_kernel)
+    else:
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize = sobel_kernel)
+    
+    sobel_abs = np.absolute(sobel)
+    sobel_scaled = np.uint8(255 * sobel_abs / np.max(sobel_abs))
+    
+    binary_output = np.zeros_like(sobel_scaled)
+    binary_output[ (sobel_scaled > thresh[0]) & (sobel_scaled <= thresh[1])] = 1
+    return binary_output
+```
+#### Combine Color/Gradient Threshold
+
+After getting binary thresholded image from saturation and x-sobel filtering. I used ```or``` operation to retain all the pixels that appear in either image. Here are the result on some test images.
+
+<p align="center">
+  <img src="output_images/threshold_images.jpg" width="1000" height="300"/>
+  <br>
+  <em>Figure 2: Binary Thresholded Images</em>
+</p>
+
+
+### Perspective Transform
+
+```cv2.getPerspectiveTransform``` function was used to perform perspective transform. To do this, we need provide four points in original image and 4 points in new transformed image, listed as below.
+
+| Source        | Destination   | 
+|:-------------:|:-------------:| 
+| 245, height-30         | 300, height        | 
+| width/2 - 45, 450      | 300, 0     |
+| width/2 + 45, 450      | width-300, 0      |
+| width-225, height-30   | width-300, height        |
+
+Using those points, we can get transformation matrix and inverse matrix.
+
+```python
+M = cv2.getPerspectiveTransform(src_verticles.astype(np.float32), dst_verticles.astype(np.float32))
+Minv = cv2.getPerspectiveTransform(dst_verticles.astype(np.float32), src_verticles.astype(np.float32))
+```
+Having ```M``` and ```Minv``` we can transform image to birdeye view and back.
+
+```python
+def perspective_transform(img):
+    transformed_img = cv2.warpPerspective(img, M, (width, height), flags=cv2.INTER_LINEAR)
+    return transformed_img
+
+def reverse_perspective_transform(img):
+    transformed_img = cv2.warpPerspective(img, Minv, (width, height), flags=cv2.INTER_LINEAR)
+    return transformed_img
+```
+
+The image transformation example is shown in Figure 3.
+<p align="center">
+  <img src="output_images/perspective_transform.jpg" width="1000" height="300"/>
+  <br>
+  <em>Figure 3: Perspective Transformation</em>
+</p>
+
+### Identify Line Pixels 
+
+### Fit Lines
+
+### Calculate Radius of Curvature
+
+### Result Visualization
+
+### Final Video
+
+### Improvement
 
 #### 1. Provide an example of a distortion-corrected image.
 
